@@ -45,33 +45,57 @@ async function postProcess(
 export async function parseCsvAction(text: string): Promise<ParseActionResult> {
   const session = await auth();
   if (!session?.user?.id) return { success: false, data: [], errors: ["Not authenticated"] };
-  const raw = parseCsv(text);
-  return postProcess(raw, session.user.id);
+  try {
+    return await postProcess(parseCsv(text), session.user.id);
+  } catch (e) {
+    console.error("parseCsvAction failed", e);
+    return { success: false, data: [], errors: ["Couldn't process this CSV. Please check the file and try again."] };
+  }
 }
 
 export async function parsePdfAction(base64: string): Promise<ParseActionResult> {
   const session = await auth();
   if (!session?.user?.id) return { success: false, data: [], errors: ["Not authenticated"] };
-
-  // Lazy import so pdf-parse never gets bundled for the client
-  const { parsePdf } = await import("@/lib/parsers/pdfParser");
-  const buffer = Buffer.from(base64, "base64");
-  const raw = await parsePdf(buffer);
-  return postProcess(raw, session.user.id);
+  try {
+    // Lazy import so pdf-parse never gets bundled for the client
+    const { parsePdf } = await import("@/lib/parsers/pdfParser");
+    const buffer = Buffer.from(base64, "base64");
+    const raw = await parsePdf(buffer);
+    return await postProcess(raw, session.user.id);
+  } catch (e) {
+    console.error("parsePdfAction failed", e);
+    return {
+      success: false,
+      data: [],
+      errors: [
+        "Couldn't read this PDF — it's likely password-protected or a scanned image (no text layer). " +
+        "Unlock it first (open with the password, then re-save/print to PDF), or — easiest — export your " +
+        "statement as CSV from net banking and use the CSV tab. CSV imports most reliably.",
+      ],
+    };
+  }
 }
 
 export async function parseSmsAction(text: string): Promise<ParseActionResult> {
   const session = await auth();
   if (!session?.user?.id) return { success: false, data: [], errors: ["Not authenticated"] };
-  const raw = parseSms(text);
-  return postProcess(raw, session.user.id);
+  try {
+    return await postProcess(parseSms(text), session.user.id);
+  } catch (e) {
+    console.error("parseSmsAction failed", e);
+    return { success: false, data: [], errors: ["Couldn't process this SMS text. Please try again."] };
+  }
 }
 
 export async function parseEmailAction(text: string): Promise<ParseActionResult> {
   const session = await auth();
   if (!session?.user?.id) return { success: false, data: [], errors: ["Not authenticated"] };
-  const raw = parseEmail(text);
-  return postProcess(raw, session.user.id);
+  try {
+    return await postProcess(parseEmail(text), session.user.id);
+  } catch (e) {
+    console.error("parseEmailAction failed", e);
+    return { success: false, data: [], errors: ["Couldn't process this email text. Please try again."] };
+  }
 }
 
 // ─── Confirm import ───────────────────────────────────────────────────────────
