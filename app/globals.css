@@ -1,26 +1,259 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
 
+/* ─── BillBrain Design Tokens ─────────────────────────────────────────────── */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background:              var(--background);
+  --color-foreground:              var(--foreground);
+  --color-card:                    var(--card);
+  --color-card-foreground:         var(--card-foreground);
+  --color-popover:                 var(--popover);
+  --color-popover-foreground:      var(--popover-foreground);
+  --color-primary:                 var(--primary);
+  --color-primary-foreground:      var(--primary-foreground);
+  --color-secondary:               var(--secondary);
+  --color-secondary-foreground:    var(--secondary-foreground);
+  --color-muted:                   var(--muted);
+  --color-muted-foreground:        var(--muted-foreground);
+  --color-accent:                  var(--accent);
+  --color-accent-foreground:       var(--accent-foreground);
+  --color-destructive:             var(--destructive);
+  --color-border:                  var(--border);
+  --color-input:                   var(--input);
+  --color-ring:                    var(--ring);
+
+  /* BillBrain brand tokens — indigo / violet */
+  --color-indigo:                  var(--indigo);
+  --color-indigo-foreground:       var(--indigo-foreground);
+  --color-violet:                  var(--violet);
+  --color-surface-1:               var(--surface-1);
+  --color-surface-2:               var(--surface-2);
+  --color-surface-3:               var(--surface-3);
+  --color-subtle:                  var(--subtle);
+
+  /* Charts */
+  --color-chart-1:                 var(--chart-1);
+  --color-chart-2:                 var(--chart-2);
+  --color-chart-3:                 var(--chart-3);
+  --color-chart-4:                 var(--chart-4);
+  --color-chart-5:                 var(--chart-5);
+
+  /* Sidebar */
+  --color-sidebar:                 var(--sidebar);
+  --color-sidebar-foreground:      var(--sidebar-foreground);
+  --color-sidebar-primary:         var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent:          var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border:          var(--sidebar-border);
+  --color-sidebar-ring:            var(--sidebar-ring);
+
+  /* Radii */
+  --radius-sm:  calc(var(--radius) * 0.6);
+  --radius-md:  calc(var(--radius) * 0.8);
+  --radius-lg:  var(--radius);
+  --radius-xl:  calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+
+  /* Fonts */
+  --font-sans: var(--font-ibm-plex-sans);
+  --font-mono: var(--font-ibm-plex-mono);
+  --font-heading: var(--font-ibm-plex-sans);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ─── Neobank dark theme — indigo / violet on indigo-black ────────────────── */
+:root {
+  color-scheme: dark;
+
+  /* Base palette — indigo-tinted obsidian */
+  --background:    oklch(0.075 0.012 280);  /* near-black, indigo tint */
+  --foreground:    oklch(0.945 0.006 280);  /* cool off-white */
+
+  /* Surface layers */
+  --surface-1:     oklch(0.115 0.014 282);  /* card base */
+  --surface-2:     oklch(0.145 0.017 282);  /* elevated card */
+  --surface-3:     oklch(0.185 0.020 282);  /* hover / selected */
+  --subtle:        oklch(0.235 0.020 282);  /* dividers, subtle bg */
+
+  /* Cards & popovers */
+  --card:          oklch(0.118 0.015 282);
+  --card-foreground: oklch(0.945 0.006 280);
+  --popover:       oklch(0.135 0.017 282);
+  --popover-foreground: oklch(0.945 0.006 280);
+
+  /* Primary — indigo */
+  --primary:       oklch(0.605 0.205 278);  /* vivid indigo #6366f1-ish */
+  --primary-foreground: oklch(0.99 0 0);
+
+  /* Brand — indigo / violet */
+  --indigo:        oklch(0.62 0.205 278);
+  --indigo-foreground: oklch(0.99 0 0);
+  --violet:        oklch(0.625 0.235 305);  /* violet accent #a855f7-ish */
+
+  /* Secondary */
+  --secondary:     oklch(0.185 0.020 282);
+  --secondary-foreground: oklch(0.945 0.006 280);
+
+  /* Muted */
+  --muted:         oklch(0.150 0.017 282);
+  --muted-foreground: oklch(0.625 0.030 282);
+
+  /* Accent — indigo-tinted surface */
+  --accent:        oklch(0.215 0.035 288);
+  --accent-foreground: oklch(0.945 0.006 280);
+
+  /* Destructive */
+  --destructive:   oklch(0.63 0.22 25);
+
+  /* Borders & inputs */
+  --border:        oklch(1 0 0 / 9%);
+  --input:         oklch(1 0 0 / 12%);
+  --ring:          oklch(0.605 0.205 278 / 55%);
+
+  /* Charts — indigo / violet primary, cool spectrum secondary */
+  --chart-1:       oklch(0.62 0.205 278);  /* indigo */
+  --chart-2:       oklch(0.625 0.235 305); /* violet */
+  --chart-3:       oklch(0.66 0.165 250);  /* blue */
+  --chart-4:       oklch(0.72 0.135 210);  /* cyan */
+  --chart-5:       oklch(0.64 0.215 330);  /* magenta-pink */
+
+  /* Sidebar */
+  --sidebar:       oklch(0.098 0.013 282);
+  --sidebar-foreground: oklch(0.945 0.006 280);
+  --sidebar-primary: oklch(0.62 0.205 278);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.185 0.020 282);
+  --sidebar-accent-foreground: oklch(0.945 0.006 280);
+  --sidebar-border: oklch(1 0 0 / 7%);
+  --sidebar-ring:  oklch(0.605 0.205 278 / 55%);
+
+  --radius: 0.8rem;
+}
+
+/* .dark is aliased to :root — always dark */
+.dark {
+  color-scheme: dark;
+}
+
+/* ─── Base ─────────────────────────────────────────────────────────────────── */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
   }
+
+  html {
+    @apply font-sans h-full antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  body {
+    @apply bg-background text-foreground min-h-full;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight;
+  }
+
+  /* Tabular figures for all financial numbers */
+  .tabular-nums { font-variant-numeric: tabular-nums; }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ─── Utilities ────────────────────────────────────────────────────────────── */
+@layer utilities {
+  /* Glass morphism card */
+  .glass {
+    background: oklch(1 0 0 / 4%);
+    backdrop-filter: blur(16px) saturate(1.6);
+    border: 1px solid oklch(1 0 0 / 8%);
+  }
+
+  /* Indigo brand glow ring (selected / featured states) */
+  .glow-primary {
+    box-shadow: 0 0 0 1px oklch(0.605 0.205 278 / 35%),
+                0 0 28px oklch(0.605 0.205 278 / 14%);
+  }
+
+  /* Premium primary-button sheen + colored drop shadow */
+  .btn-primary-glow {
+    box-shadow: inset 0 1px 0 0 oklch(1 0 0 / 16%),
+                0 4px 16px -4px oklch(0.605 0.205 278 / 50%);
+  }
+
+  /* Indigo → violet brand gradient (logos, accents, fills) */
+  .brand-gradient {
+    background-image: linear-gradient(135deg,
+      oklch(0.62 0.205 278),
+      oklch(0.625 0.235 305));
+  }
+
+  /* Indigo → violet text gradient (headlines) */
+  .gradient-text {
+    background: linear-gradient(120deg,
+      oklch(0.965 0.01 280),
+      oklch(0.66 0.205 278) 55%,
+      oklch(0.68 0.235 305));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Surface elevation helpers */
+  .surface-1 { background-color: var(--surface-1); }
+  .surface-2 { background-color: var(--surface-2); }
+  .surface-3 { background-color: var(--surface-3); }
+
+  /* Scrollbar styling */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(1 0 0 / 12%) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar { width: 4px; height: 4px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: oklch(1 0 0 / 12%);
+    border-radius: 9999px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.605 0.205 278 / 35%);
+  }
+
+  /* Premium card hover lift with indigo-tinted shadow */
+  .card-hover {
+    transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+  }
+  .card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 36px oklch(0.04 0.02 280 / 55%),
+                0 0 0 1px oklch(0.605 0.205 278 / 14%);
+  }
+
+  /* Skeleton pulse override for dark theme */
+  .skeleton-dark {
+    background: linear-gradient(
+      90deg,
+      oklch(0.150 0.017 282) 25%,
+      oklch(0.185 0.020 282) 50%,
+      oklch(0.150 0.017 282) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s infinite;
+  }
+
+  @keyframes skeleton-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* Respect reduced-motion globally */
+  @media (prefers-reduced-motion: reduce) {
+    .card-hover { transition: none; }
+    .skeleton-dark { animation: none; }
+  }
 }

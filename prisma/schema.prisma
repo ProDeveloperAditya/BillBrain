@@ -1,0 +1,464 @@
+// BillBrain AI — Production Prisma Schema
+// PostgreSQL + pgvector-ready
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+/// How money moved: out or in
+enum TransactionType {
+  DEBIT
+  CREDIT
+}
+
+/// Lifecycle of an uploaded file or text paste through parsing
+enum UploadStatus {
+  PENDING     // received, not yet queued
+  PROCESSING  // parser is running
+  DONE        // parsed successfully
+  FAILED      // parsing errored
+}
+
+/// How the user supplied data
+enum ParseMethod {
+  CSV
+  PDF
+  SMS_TEXT
+  EMAIL_TEXT
+  MANUAL
+}
+
+/// Canonical spending categories used across transactions and merchants
+enum CategoryName {
+  FOOD_DINING
+  GROCERIES
+  SUBSCRIPTIONS
+  TRANSPORT
+  SHOPPING
+  HEALTHCARE
+  EDUCATION
+  SALARY_INCOME
+  RENT_HOUSING
+  UTILITIES
+  ENTERTAINMENT
+  COFFEE_CAFES
+  TRAVEL
+  INSURANCE
+  BANKING_FEES
+  TRANSFERS
+  INVESTMENTS
+  OTHER
+}
+
+/// How often a recurring charge fires
+enum RecurringFrequency {
+  DAILY
+  WEEKLY
+  FORTNIGHTLY
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  YEARLY
+  IRREGULAR
+}
+
+/// Classification of an AI-generated insight
+enum InsightType {
+  LEAK                // identified avoidable spend pattern
+  SUBSCRIPTION_ALERT  // subscription-related observation
+  SAVINGS_OPPORTUNITY // actionable savings suggestion
+  ANOMALY             // statistically unusual transaction or period
+  CATEGORY_SPIKE      // a category grew significantly vs prior period
+  DUPLICATE_CHARGE    // potential duplicate or double-billing
+  WEEKLY_DIGEST       // scheduled summary insight
+}
+
+enum InsightSeverity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+}
+
+/// Which AI backend produced a response
+enum AIProvider {
+  OPENAI
+  GEMINI
+  GROQ
+  DEMO
+}
+
+/// Role of a participant in a chat exchange
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+/// Supported display currencies
+enum Currency {
+  INR
+  USD
+  EUR
+  GBP
+  AUD
+  CAD
+  SGD
+  AED
+}
+
+/// User's primary financial objective
+enum SpendingGoal {
+  SAVE_MORE
+  CUT_SUBSCRIPTIONS
+  UNDERSTAND_PATTERNS
+  REDUCE_LEAKS
+  BUILD_EMERGENCY_FUND
+}
+
+// ─── Core identity ────────────────────────────────────────────────────────────
+
+/// Top-level account. externalId maps to the auth provider (Clerk / Auth.js) UID.
+model User {
+  id            String    @id @default(cuid())
+  externalId    String?   @unique            // OAuth provider UID (future use)
+  email         String    @unique
+  emailVerified DateTime?                    // null until email is verified / OAuth signs in
+  name          String?
+  avatarUrl     String?
+  password      String?                      // bcrypt hash; null for OAuth-only accounts
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  profile             Profile?
+  uploads             UploadedFile[]
+  parsedSources       ParsedSource[]
+  transactions        Transaction[]
+  recurringCharges    RecurringCharge[]
+  subscriptionSignals SubscriptionSignal[]
+  insights            Insight[]
+  chatSessions        ChatSession[]
+  chatMessages        ChatMessage[]
+  embeddingChunks     EmbeddingChunk[]
+  snapshots           SpendingSnapshot[]
+}
+
+/// Per-user preferences and onboarding state.
+model Profile {
+  id                   String        @id @default(cuid())
+  userId               String        @unique
+  currency             Currency      @default(INR)
+  locale               String        @default("en-IN")
+  monthlyIncomeRange   String?       // e.g. "50000-100000"
+  spendingGoal         SpendingGoal?
+  financialPersonality String?
+  preferredAiProvider  AIProvider    @default(DEMO)
+  demoMode             Boolean       @default(false)
+  onboardingCompleted  Boolean       @default(false)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Data ingestion ───────────────────────────────────────────────────────────
+
+/// Every input artifact: a CSV/PDF file upload, or a text paste (SMS / email).
+model UploadedFile {
+  id           String       @id @default(cuid())
+  userId       String
+  filename     String
+  mimeType     String
+  size         Int          // bytes; 0 for text pastes
+  parseMethod  ParseMethod
+  status       UploadStatus @default(PENDING)
+  errorMessage String?
+  recordCount  Int          @default(0)  // transactions extracted
+  checksum     String?                   // SHA-256 hex for dedup
+  storageKey   String?                   // cloud storage path if applicable
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parsedSources ParsedSource[]
+  transactions  Transaction[]
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([checksum])
+}
+
+/// One parsing run against an UploadedFile. Multiple runs allowed (retry / re-parse).
+model ParsedSource {
+  id           String       @id @default(cuid())
+  userId       String
+  fileId       String
+  rawText      String?      // full extracted text (SMS paste, email paste, PDF text layer)
+  parseMethod  ParseMethod
+  status       UploadStatus @default(PENDING)
+  recordCount  Int          @default(0)
+  errorMessage String?
+  parsedAt     DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  file         UploadedFile     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  chunks       EmbeddingChunk[]
+
+  @@index([userId])
+  @@index([fileId])
+}
+
+// ─── Reference data ───────────────────────────────────────────────────────────
+
+/// Global merchant registry. Normalized names prevent duplicates across users.
+model Merchant {
+  id             String       @id @default(cuid())
+  rawName        String       // as seen in the source
+  normalizedName String       @unique
+  category       CategoryName @default(OTHER)
+  logoUrl        String?
+  website        String?
+  isSubscription Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  transactions     Transaction[]
+  recurringCharges RecurringCharge[]
+
+  @@index([normalizedName])
+}
+
+/// Display metadata for each CategoryName enum value (colors, icons, labels).
+model Category {
+  id          String       @id @default(cuid())
+  name        CategoryName @unique
+  displayName String
+  color       String       @default("#64748b")
+  icon        String?                         // lucide icon name
+  isSystem    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+// ─── Financial data ───────────────────────────────────────────────────────────
+
+/// A single financial movement extracted from any source.
+model Transaction {
+  id                 String          @id @default(cuid())
+  userId             String
+  merchantId         String?
+  sourceFileId       String?         // direct link to originating UploadedFile
+  parsedSourceId     String?         // which ParsedSource run extracted this row
+  date               DateTime
+  amount             Decimal         @db.Decimal(12, 2)
+  currency           Currency        @default(INR)
+  type               TransactionType
+  rawDescription     String?         // verbatim text from the bank/source
+  description        String?         // human-readable normalized description
+  category           CategoryName    @default(OTHER)
+  isRecurring        Boolean         @default(false)
+  isFlagged          Boolean         @default(false)
+  isDuplicate        Boolean         @default(false)
+  tags               String[]
+  confidence         Float           @default(1.0) // parser confidence 0–1
+  normalizedMerchant String?
+  externalId         String?         // original transaction ID from source
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant            Merchant?            @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  sourceFile          UploadedFile?        @relation(fields: [sourceFileId], references: [id], onDelete: SetNull)
+  parsedSource        ParsedSource?        @relation(fields: [parsedSourceId], references: [id], onDelete: SetNull)
+  subscriptionSignals SubscriptionSignal[]
+
+  @@index([userId, date(sort: Desc)])
+  @@index([userId, category])
+  @@index([userId, isRecurring])
+  @@index([userId, isFlagged])
+  @@index([userId, isDuplicate])
+  @@index([sourceFileId])
+  @@index([parsedSourceId])
+  @@index([normalizedMerchant])
+}
+
+/// A detected recurring charge pattern inferred from transaction history.
+model RecurringCharge {
+  id                  String             @id @default(cuid())
+  userId              String
+  merchantId          String?
+  merchantName        String
+  normalizedName      String
+  frequency           RecurringFrequency
+  averageAmount       Decimal            @db.Decimal(12, 2)
+  amountVariance      Float              @default(0) // std-dev across observed amounts
+  currency            Currency           @default(INR)
+  firstSeenDate       DateTime?
+  lastChargedDate     DateTime?
+  estimatedNextDate   DateTime?
+  confidenceScore     Float              @default(0.8)
+  annualCost          Decimal            @db.Decimal(12, 2) @default(0)
+  isPossiblyForgotten Boolean            @default(false)
+  isCancelled         Boolean            @default(false)
+  cancelledAt         DateTime?
+  notes               String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  user     User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant Merchant?            @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  signals  SubscriptionSignal[]
+
+  @@index([userId])
+  @@index([userId, normalizedName])
+  @@index([userId, isPossiblyForgotten])
+}
+
+/// Bridges a Transaction to a RecurringCharge detection signal.
+/// One transaction can fire multiple signals during detection; confirmed ones link to a RecurringCharge.
+model SubscriptionSignal {
+  id                String          @id @default(cuid())
+  userId            String
+  transactionId     String
+  recurringChargeId String?
+  merchantName      String
+  normalizedName    String
+  amount            Decimal         @db.Decimal(12, 2)
+  currency          Currency        @default(INR)
+  signalDate        DateTime
+  frequency         RecurringFrequency?
+  isConfirmed       Boolean         @default(false)
+  confidence        Float           @default(0.8)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction     Transaction      @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  recurringCharge RecurringCharge? @relation(fields: [recurringChargeId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([transactionId])
+  @@index([recurringChargeId])
+  @@index([userId, normalizedName])
+}
+
+// ─── Insights & AI ────────────────────────────────────────────────────────────
+
+/// An AI-generated or rule-based financial insight surfaced to the user.
+model Insight {
+  id          String          @id @default(cuid())
+  userId      String
+  type        InsightType
+  severity    InsightSeverity @default(INFO)
+  title       String
+  body        String          // human-readable explanation
+  data        Json?           // structured payload (amounts, merchant names, etc.)
+  isRead      Boolean         @default(false)
+  isDismissed Boolean         @default(false)
+  expiresAt   DateTime?       // null = permanent
+  generatedAt DateTime        @default(now())
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([userId, isRead])
+  @@index([userId, isDismissed])
+  @@index([userId, generatedAt(sort: Desc)])
+}
+
+/// A conversation thread with the AI assistant.
+model ChatSession {
+  id           String     @id @default(cuid())
+  userId       String
+  title        String?
+  aiProvider   AIProvider @default(DEMO)
+  messageCount Int        @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@index([userId])
+  @@index([userId, updatedAt(sort: Desc)])
+}
+
+/// A single turn in a ChatSession.
+model ChatMessage {
+  id         String      @id @default(cuid())
+  sessionId  String
+  userId     String      // denormalized for direct user-scoped queries
+  role       MessageRole
+  content    String      // message body
+  citations  String[]    // transaction IDs or source references used as context
+  tokenCount Int?
+  model      String?     // e.g. "gpt-4o", "gemini-2.0-flash"
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([userId])
+}
+
+/// A text chunk prepared for vector embedding. The embedding column is commented out
+/// until pgvector is enabled (run: CREATE EXTENSION IF NOT EXISTS vector).
+model EmbeddingChunk {
+  id             String   @id @default(cuid())
+  userId         String
+  parsedSourceId String?
+  chunkIndex     Int      @default(0) // order within the source document
+  content        String   // text content of this chunk
+  // embedding   Unsupported("vector(1536)")  -- activate after: CREATE EXTENSION vector
+  tokenCount     Int?
+  embeddingModel String?  // e.g. "text-embedding-3-small"
+  metadata       Json?    // arbitrary key-value pairs (page number, section, etc.)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parsedSource ParsedSource? @relation(fields: [parsedSourceId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([parsedSourceId])
+  @@index([userId, chunkIndex])
+}
+
+// ─── Analytics ────────────────────────────────────────────────────────────────
+
+/// Cached monthly aggregate for a user. Recomputed after each import.
+model SpendingSnapshot {
+  id                String   @id @default(cuid())
+  userId            String
+  month             DateTime // always the 1st of the month at 00:00 UTC
+  totalSpend        Decimal  @db.Decimal(12, 2)
+  totalCredit       Decimal  @db.Decimal(12, 2) @default(0)
+  recurringTotal    Decimal  @db.Decimal(12, 2) @default(0)
+  avoidableSpend    Decimal  @db.Decimal(12, 2) @default(0)
+  transactionCount  Int      @default(0)
+  savingsScore      Float?   // 0–100 composite score; null until computed
+  topCategories     Json     // Array<{ category: CategoryName, amount: number, percentage: number }>
+  categoryBreakdown Json     // Record<CategoryName, { amount: number, count: number }>
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month])
+  @@index([userId])
+  @@index([userId, month(sort: Desc)])
+}
