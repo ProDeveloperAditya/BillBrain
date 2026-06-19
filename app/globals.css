@@ -63,6 +63,15 @@
   --font-sans: var(--font-ibm-plex-sans);
   --font-mono: var(--font-ibm-plex-mono);
   --font-heading: var(--font-ibm-plex-sans);
+
+  /* Animations */
+  --animate-aurora: aurora 60s linear infinite;
+}
+
+/* Aurora background keyframe + palette (used by AuroraBackground) */
+@keyframes aurora {
+  from { background-position: 50% 50%, 50% 50%; }
+  to   { background-position: 350% 50%, 350% 50%; }
 }
 
 /* ─── Neobank dark theme — indigo / violet on indigo-black ────────────────── */
@@ -132,6 +141,16 @@
   --sidebar-ring:  oklch(0.605 0.205 278 / 55%);
 
   --radius: 0.8rem;
+
+  /* Aurora palette — blue/indigo/violet to match the brand */
+  --white: #ffffff;
+  --black: #000000;
+  --transparent: transparent;
+  --blue-300: #93c5fd;
+  --blue-400: #60a5fa;
+  --blue-500: #6366f1;   /* leaned to indigo for brand cohesion */
+  --indigo-300: #a5b4fc;
+  --violet-200: #ddd6fe;
 }
 
 /* .dark is aliased to :root — always dark */
@@ -255,5 +274,6 @@
   @media (prefers-reduced-motion: reduce) {
     .card-hover { transition: none; }
     .skeleton-dark { animation: none; }
+    .animate-aurora { animation: none !important; }
   }
 }
