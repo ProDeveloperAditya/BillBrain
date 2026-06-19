@@ -131,7 +131,7 @@ async function main() {
   const user = await prisma.user.create({
     data: {
       email: "demo@billbrain.ai",
-      name: "Arjun Sharma",
+      name: "Aditya Raj",
       password: passwordHash,
       profile: {
         create: {

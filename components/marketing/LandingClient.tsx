@@ -252,7 +252,7 @@ function DashboardPreview() {
         </div>
         <div className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-primary" />
-          <span className="text-[11px] text-muted-foreground">Arjun Sharma</span>
+          <span className="text-[11px] text-muted-foreground">Aditya Raj</span>
         </div>
       </div>
 
