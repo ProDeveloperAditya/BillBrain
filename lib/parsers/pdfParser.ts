@@ -1,21 +1,27 @@
 import "server-only";
-// pdf-parse is CommonJS; esModuleInterop handles the default import
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require("pdf-parse") as (buf: Buffer) => Promise<{ text: string; numpages: number; info: Record<string, unknown> }>;
 import type { ParsedTransaction, ParserResult } from "./types";
+
+// pdf-parse v2 is class-based: `new PDFParse({ data }).getText()`.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { PDFParse } = require("pdf-parse") as {
+  PDFParse: new (opts: { data: Buffer }) => {
+    getText: () => Promise<{ text: string }>;
+    destroy: () => Promise<void>;
+  };
+};
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
 const MONTH_MAP: Record<string, string> = {
-  jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",
-  jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12",
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
 };
 
 function parseDate(raw: string): string | null {
   const s = raw.trim();
 
   // DD-Mon-YY / DD-Mon-YYYY
-  const dMonY = s.match(/^(\d{1,2})[\s\-\/]([A-Za-z]{3})[\s\-\/](\d{2,4})$/);
+  const dMonY = s.match(/^(\d{1,2})[\s\-/]([A-Za-z]{3})[\s\-/](\d{2,4})$/);
   if (dMonY) {
     const m = MONTH_MAP[dMonY[2].toLowerCase()];
     if (m) {
@@ -25,12 +31,12 @@ function parseDate(raw: string): string | null {
     }
   }
 
-  // DD/MM/YYYY or DD-MM-YYYY
-  const dmy = s.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})$/);
+  // DD-MM-YY / DD-MM-YYYY / DD/MM/YYYY / DD.MM.YYYY
+  const dmy = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})$/);
   if (dmy) {
     let y = dmy[3];
     if (y.length === 2) y = parseInt(y) > 50 ? "19" + y : "20" + y;
-    return `${y}-${dmy[2].padStart(2,"0")}-${dmy[1].padStart(2,"0")}`;
+    return `${y}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
   }
 
   // YYYY-MM-DD
@@ -40,104 +46,137 @@ function parseDate(raw: string): string | null {
   return isNaN(nd.getTime()) ? null : nd.toISOString().slice(0, 10);
 }
 
-function parseAmount(raw: string): number | null {
-  const s = raw.replace(/[₹$€£¥,\s]/g, "").replace(/\((.+)\)/, "-$1");
-  const n = parseFloat(s);
-  return isNaN(n) ? null : Math.abs(n);
+function num(s: string): number {
+  const n = parseFloat(s.replace(/,/g, ""));
+  return isNaN(n) ? 0 : n;
 }
 
-// ─── Line classifiers ─────────────────────────────────────────────────────────
+// ─── Row patterns ───────────────────────────────────────────────────────────--
 
-// Date pattern at the start of a line (common in bank statements)
-const DATE_AT_START = /^(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}|\d{1,2}[\s\-][A-Za-z]{3}[\s\-]\d{2,4})\s+/;
+// A transaction row starts with a date.
+const DATE_START = /^(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{1,2}[\s\-/][A-Za-z]{3}[\s\-/]\d{2,4})\b/;
 
-// Amount pattern (Indian format with optional commas)
-const AMOUNT_RE = /(?:₹|Rs\.?|INR\s?)?([\d]{1,3}(?:,[\d]{3})*(?:\.[\d]{1,2})?)/g;
+// Indian bank statements (SBI etc.) end each row with: Credit  Debit  Balance.
+// One of credit/debit is 0; the other is the txn amount; balance always has decimals.
+const TXN_END =
+  /\s+([\d,]+(?:\.\d{1,2})?|0)\s+([\d,]+(?:\.\d{1,2})?|0)\s+([\d,]+\.\d{2})\s*$/;
 
-// Lines we should skip
-const SKIP_RE = /opening balance|closing balance|total|balance b\/f|balance c\/f|statement|account number|statement period|page \d|customer.*service|branch|ifsc|micr|available balance|^date\s/i;
+const SKIP_RE =
+  /opening balance|closing balance|transaction overview|balance b\/f|balance c\/f|statement period|page \d|customer.*care|ifsc|micr code|available balance|account holder|^date\b/i;
 
-/**
- * Extract transactions from a single text line.
- * Strategy: find date at start, then scan for amounts, classify last two as debit/credit.
- */
-function parseLine(line: string): ParsedTransaction | null {
-  const trimmed = line.trim();
-  if (!trimmed || SKIP_RE.test(trimmed) || trimmed.length < 15) return null;
+/** Parse a (possibly merged) SBI-style row with trailing Credit/Debit/Balance columns. */
+function parseSbiRow(row: string): ParsedTransaction | null {
+  const dm = row.match(DATE_START);
+  if (!dm) return null;
+  const em = row.match(TXN_END);
+  if (!em) return null;
 
-  const dateMatch = trimmed.match(DATE_AT_START);
-  if (!dateMatch) return null;
-
-  const date = parseDate(dateMatch[1]);
+  const date = parseDate(dm[1]);
   if (!date) return null;
 
-  const rest = trimmed.slice(dateMatch[0].length);
+  const credit = num(em[1]);
+  const debit = num(em[2]);
+  const balance = num(em[3]);
 
-  // Collect all numbers in the rest of the line
+  const amount = debit > 0 ? debit : credit;
+  if (!(amount > 0)) return null;
+  const type: "DEBIT" | "CREDIT" = debit > 0 ? "DEBIT" : "CREDIT";
+
+  const rawDescription =
+    row
+      .slice(dm[0].length, row.length - em[0].length)
+      .replace(/[-|*]+\s*$/, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 90) || "Transaction";
+
+  return { date, rawDescription, amount, type, balance, currency: "INR", confidence: 0.9 };
+}
+
+/** Generic fallback for other banks: date at start, last two numbers = amount, balance. */
+function parseGenericRow(row: string): ParsedTransaction | null {
+  const dm = row.match(DATE_START);
+  if (!dm) return null;
+  const date = parseDate(dm[1]);
+  if (!date) return null;
+
+  const rest = row.slice(dm[0].length);
   const amounts: number[] = [];
+  const re = /([\d]{1,3}(?:,[\d]{3})+(?:\.\d{1,2})?|\d+\.\d{2})/g;
   let m: RegExpExecArray | null;
-  AMOUNT_RE.lastIndex = 0;
-  while ((m = AMOUNT_RE.exec(rest)) !== null) {
+  while ((m = re.exec(rest)) !== null) {
     const n = parseFloat(m[1].replace(/,/g, ""));
     if (!isNaN(n) && n > 0) amounts.push(n);
   }
-
   if (amounts.length === 0) return null;
 
-  // Extract description: text between date and first number
-  const firstAmtIdx = rest.search(/[\d,]+(?:\.\d{1,2})?/);
-  const rawDescription = (firstAmtIdx > 0 ? rest.slice(0, firstAmtIdx) : rest)
-    .replace(/[|*]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+  const drCr = rest.match(/\b(DR|CR|Dr|Cr)\b/);
+  const type: "DEBIT" | "CREDIT" =
+    drCr ? (/cr/i.test(drCr[1]) ? "CREDIT" : "DEBIT")
+         : /credit|deposit|received/i.test(rest) ? "CREDIT" : "DEBIT";
 
-  // Heuristic: in most bank statements the last column is balance, second-last is the txn amount.
-  // If there are 2+ numbers, take the second-to-last as the transaction amount.
-  // For debit/credit determination: look for DR/CR markers.
-  const drCrMatch = rest.match(/\b(DR|CR|Dr|Cr)\b/);
-  let type: "DEBIT" | "CREDIT" = "DEBIT";
-  if (drCrMatch) {
-    type = /cr/i.test(drCrMatch[1]) ? "CREDIT" : "DEBIT";
-  } else if (/credit|deposit|received/i.test(rest)) {
-    type = "CREDIT";
-  }
+  const firstAmtIdx = rest.search(/[\d,]+\.\d{2}/);
+  const rawDescription =
+    (firstAmtIdx > 0 ? rest.slice(0, firstAmtIdx) : rest)
+      .replace(/[|*-]+\s*$/, "").replace(/\s+/g, " ").trim().slice(0, 90) || "Transaction";
 
   const amount = amounts.length >= 2 ? amounts[amounts.length - 2] : amounts[amounts.length - 1];
   const balance = amounts.length >= 2 ? amounts[amounts.length - 1] : undefined;
 
-  return {
-    date,
-    rawDescription: rawDescription || "Unknown",
-    amount,
-    type,
-    balance,
-    currency: "INR",
-    confidence: drCrMatch ? 0.85 : 0.65,
-  };
+  return { date, rawDescription, amount, type, balance, currency: "INR", confidence: drCr ? 0.8 : 0.6 };
 }
 
 // ─── Main parser ──────────────────────────────────────────────────────────────
 
 export async function parsePdf(buffer: Buffer): Promise<ParserResult> {
-  const errors: string[] = [];
-  const transactions: ParsedTransaction[] = [];
-
   let pdfText: string;
   try {
-    const data = await pdfParse(buffer);
-    pdfText = data.text;
+    const parser = new PDFParse({ data: buffer });
+    try {
+      const result = await parser.getText();
+      pdfText = result.text ?? "";
+    } finally {
+      await parser.destroy().catch(() => {});
+    }
   } catch (e) {
-    return { success: false, data: [], errors: [`PDF parsing failed: ${String(e)}`] };
+    return {
+      success: false,
+      data: [],
+      errors: [`Couldn't read this PDF: ${String(e)}`],
+    };
   }
 
-  const lines = pdfText.split("\n");
+  const lines = pdfText.split("\n").map((l) => l.trim());
+  const transactions: ParsedTransaction[] = [];
 
-  for (const line of lines) {
-    const tx = parseLine(line);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line || !DATE_START.test(line) || SKIP_RE.test(line)) continue;
+
+    // Merge wrapped continuation lines until the Credit/Debit/Balance tail appears
+    // (or we hit the next dated row / run out).
+    let row = line;
+    let j = i;
+    while (!TXN_END.test(row) && j + 1 < lines.length && lines[j + 1] && !DATE_START.test(lines[j + 1])) {
+      j++;
+      row = `${row} ${lines[j]}`.trim();
+    }
+
+    const tx = parseSbiRow(row) ?? parseGenericRow(row);
     if (tx) transactions.push(tx);
+    i = j;
   }
 
   if (transactions.length === 0) {
-    errors.push("No transactions found — ensure this is a text-based (not scanned) PDF bank statement");
+    return {
+      success: false,
+      data: [],
+      errors: [
+        "No transactions found. This looks like a summary page or a scanned image. " +
+        "Upload a statement with a dated transaction table, or export it as CSV from net banking.",
+      ],
+    };
   }
 
-  return { success: transactions.length > 0, data: transactions, errors };
+  return { success: true, data: transactions, errors: [] };
 }
