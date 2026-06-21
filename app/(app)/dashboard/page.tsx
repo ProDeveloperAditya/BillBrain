@@ -7,19 +7,25 @@ import { RecentTransactions } from "@/components/dashboard/RecentTransactions";
 import { InsightCards } from "@/components/dashboard/InsightCards";
 import { SubscriptionSummary } from "@/components/dashboard/SubscriptionSummary";
 import { UnusualAlertBanner } from "@/components/dashboard/UnusualAlertBanner";
+import { MonthSelector } from "@/components/dashboard/MonthSelector";
 
 export const metadata = { title: "Dashboard — BillBrain AI" };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ month?: string }>;
+}) {
   const session = await auth();
   if (!session?.user?.id) redirect("/sign-in");
 
-  const data = await getDashboardData(session.user.id);
+  const { month } = await searchParams;
+  const data = await getDashboardData(session.user.id, month);
 
   return (
     <div className="space-y-5">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-end justify-between">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-foreground">
             Dashboard
@@ -33,6 +39,12 @@ export default async function DashboardPage() {
             )}
           </p>
         </div>
+        {data.hasRealData && (
+          <MonthSelector
+            availableMonths={data.availableMonths}
+            selectedMonth={data.selectedMonth}
+          />
+        )}
       </div>
 
       {/* ── Unusual alert banner ────────────────────────────────────────────── */}

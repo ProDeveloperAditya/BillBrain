@@ -117,28 +117,39 @@ export interface DashboardData {
   subscriptions: SubscriptionItem[];
   unusualAlerts: UnusualAlert[];
   hasRealData: boolean;
+  availableMonths: string[];   // ["2026-05", "2026-04", …] newest-first
+  selectedMonth: string;       // "2026-05"
 }
 
 // ─── Main query ───────────────────────────────────────────────────────────────
 
-export async function getDashboardData(userId: string): Promise<DashboardData> {
+export async function getDashboardData(
+  userId: string,
+  monthParam?: string,
+): Promise<DashboardData> {
   const now = new Date();
 
   // Fast check: does this user have any transactions at all?
   const txCount = await db.transaction.count({ where: { userId } });
   if (txCount === 0) return buildDemoFallback();
 
-  // Anchor the dashboard to the most recent month that has activity, so importing
-  // a past statement (e.g. last month's) still populates everything instead of
-  // showing an empty current month.
-  const latestTx = await db.transaction.findFirst({
+  // Build the list of months that actually have activity, so the user can switch
+  // between them. Defaults to the most recent month (or the one in ?month=).
+  const allDates = await db.transaction.findMany({
     where: { userId },
-    orderBy: { date: "desc" },
     select: { date: true },
   });
-  const ref = latestTx?.date ?? now;
-  const y = ref.getUTCFullYear();
-  const m = ref.getUTCMonth();
+  const monthSet = new Set<string>();
+  for (const t of allDates) {
+    monthSet.add(`${t.date.getUTCFullYear()}-${String(t.date.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+  const availableMonths = [...monthSet].sort().reverse();
+  const selectedMonth =
+    monthParam && availableMonths.includes(monthParam) ? monthParam : (availableMonths[0] ?? `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`);
+
+  const [sy, sm] = selectedMonth.split("-").map(Number);
+  const y = sy;
+  const m = sm - 1; // 0-indexed
 
   const currentMonthStart = new Date(Date.UTC(y, m, 1));
   const prevMonthStart    = new Date(Date.UTC(y, m - 1, 1));
@@ -407,6 +418,8 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
     subscriptions: subscriptionItems,
     unusualAlerts,
     hasRealData: true,
+    availableMonths,
+    selectedMonth,
   };
 }
 
@@ -470,5 +483,7 @@ function buildDemoFallback(): DashboardData {
     ],
     unusualAlerts: [],
     hasRealData: false,
+    availableMonths: [],
+    selectedMonth: "",
   };
 }
