@@ -11,13 +11,13 @@ const RULES: TagRule[] = [
   { pattern: /dividend|interest.*credit|cashback|refund.*credit/i,                          category: "SALARY_INCOME" },
 
   // Rent / housing
-  { pattern: /rent|landlord|owner|maintenance|society|housing|apartment|pg\b|hostel/i,      category: "RENT_HOUSING" },
+  { pattern: /\brent\b|landlord|maintenance|society|housing|apartment|\bpg\b|hostel/i,      category: "RENT_HOUSING" },
 
   // Groceries
   { pattern: /bigbasket|blinkit|zepto|dunzo|grofers|jiomart|instamart|d-mart|dmart|reliance fresh|more supermarket|star bazaar|grocery|sabji|vegetables/i, category: "GROCERIES" },
 
   // Subscriptions
-  { pattern: /netflix|spotify|amazon prime|primevideo|disney|hotstar|jiocinema|zee5|sonyliv|mxplayer|youtube premium|apple music|apple one|microsoft 365|google one|icloud|dropbox|notion|figma|canva|slack|zoom/i, category: "SUBSCRIPTIONS" },
+  { pattern: /netflix|spotify|amazon prime|primevideo|disney|hotstar|jiocinema|zee5|sonyliv|mxplayer|youtube premium|apple music|apple one|microsoft 365|google one|icloud|dropbox|notion|figma|canva|slack|zoom|claude|anthropic|openai|chatgpt|google cloud|googleclou|github|midjourney|subscription/i, category: "SUBSCRIPTIONS" },
 
   // Coffee & cafés
   { pattern: /blue tokai|third wave|starbucks|cafe coffee day|\bccd\b|barista|social|flying squirrel|coffee|chai|tea stall|chai point/i, category: "COFFEE_CAFES" },

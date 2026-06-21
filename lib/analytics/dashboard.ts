@@ -220,11 +220,23 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
     ? Number(currentSnapshot.totalSpend)
     : currentMonthDebits.reduce((s, t) => s + Number(t.amount), 0);
 
+  // Discretionary ("potentially avoidable") spend — the lever the score reacts to.
+  const DISCRETIONARY = new Set([
+    "FOOD_DINING", "COFFEE_CAFES", "ENTERTAINMENT", "SHOPPING", "SUBSCRIPTIONS",
+  ]);
+  const discretionarySpend = currentMonthDebits
+    .filter((t) => DISCRETIONARY.has(t.category))
+    .reduce((s, t) => s + Number(t.amount), 0);
+
   const avoidableSpend = currentSnapshot
     ? Number(currentSnapshot.avoidableSpend)
-    : 0;
+    : Math.round(discretionarySpend);
 
-  const savingsScore = currentSnapshot?.savingsScore ?? 65;
+  // Savings score (0–100): higher when less of your spend is discretionary.
+  const discretionaryPct = totalSpend > 0 ? (discretionarySpend / totalSpend) * 100 : 0;
+  const savingsScore =
+    currentSnapshot?.savingsScore ??
+    Math.max(20, Math.min(95, Math.round(90 - discretionaryPct)));
 
   // Monthly debit totals (computed from transactions, snapshot-independent)
   const trendMap: Record<string, number> = {};

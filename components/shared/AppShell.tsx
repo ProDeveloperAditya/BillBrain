@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -238,6 +238,89 @@ function Sidebar({
 }
 
 // ─── Topbar ───────────────────────────────────────────────────────────────────
+// ─── Lightweight dropdown (self-contained; no portal/menu primitive) ───────────
+function PopMenu({
+  trigger,
+  children,
+  width = "w-52",
+}: {
+  trigger: React.ReactNode;
+  children: (close: () => void) => React.ReactNode;
+  width?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onEsc(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center rounded-lg outline-none"
+      >
+        {trigger}
+      </button>
+      {open && (
+        <div
+          className={cn(
+            "absolute right-0 top-full z-50 mt-2 rounded-lg bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-foreground/10",
+            width
+          )}
+        >
+          {children(() => setOpen(false))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PopItem({
+  href,
+  onClick,
+  destructive,
+  children,
+}: {
+  href?: string;
+  onClick?: () => void;
+  destructive?: boolean;
+  children: React.ReactNode;
+}) {
+  const cls = cn(
+    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors text-left cursor-pointer",
+    destructive
+      ? "text-destructive hover:bg-destructive/10"
+      : "text-foreground hover:bg-surface-3"
+  );
+  if (href) {
+    return (
+      <Link href={href} onClick={onClick} className={cls}>
+        {children}
+      </Link>
+    );
+  }
+  return (
+    <button type="button" onClick={onClick} className={cls}>
+      {children}
+    </button>
+  );
+}
+
 // ─── Command palette (search / quick-jump) ─────────────────────────────────────
 function CommandPalette({
   open,
@@ -415,75 +498,70 @@ function Topbar({
         </button>
 
         {/* Notifications → quick links to the real alert pages */}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <button
-                aria-label="Alerts"
-                className="relative inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-3 transition-colors cursor-pointer"
-              />
-            }
-          >
-            <Bell className="h-4 w-4" />
-            <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-              Where your alerts live
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem render={<Link href="/leaks" />}>
-              <Zap className="mr-2 h-3.5 w-3.5" />
-              Money Leaks
-            </DropdownMenuItem>
-            <DropdownMenuItem render={<Link href="/insights" />}>
-              <Lightbulb className="mr-2 h-3.5 w-3.5" />
-              Insights
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <PopMenu
+          width="w-56"
+          trigger={
+            <span className="relative inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-surface-3 transition-colors">
+              <Bell className="h-4 w-4" />
+              <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
+            </span>
+          }
+        >
+          {(close) => (
+            <>
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">Where your alerts live</p>
+              <div className="my-1 h-px bg-border" />
+              <PopItem href="/leaks" onClick={close}>
+                <Zap className="h-3.5 w-3.5" />
+                Money Leaks
+              </PopItem>
+              <PopItem href="/insights" onClick={close}>
+                <Lightbulb className="h-3.5 w-3.5" />
+                Insights
+              </PopItem>
+            </>
+          )}
+        </PopMenu>
 
         <Separator orientation="vertical" className="h-5 mx-1" />
 
         {/* Account menu — Settings + Sign out */}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <button
-                aria-label="Account menu"
-                className="rounded-full outline-none cursor-pointer focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            }
-          >
+        <PopMenu
+          width="w-52"
+          trigger={
             <Avatar className="h-7 w-7 ring-1 ring-border hover:ring-primary/40 transition-all">
               <AvatarImage src={user.image ?? ""} alt={user.name ?? ""} />
               <AvatarFallback className="bg-primary/15 text-primary text-[10px] font-bold">
                 {userInitials}
               </AvatarFallback>
             </Avatar>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground pb-1.5">
-              Signed in as
-              <p className="font-semibold text-foreground mt-0.5 text-[13px] truncate">
-                {user.email}
-              </p>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem render={<Link href="/settings" />}>
-              <User className="mr-2 h-3.5 w-3.5" />
-              Profile &amp; Settings
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              variant="destructive"
-              onClick={() => signOut({ callbackUrl: "/" })}
-            >
-              <LogOut className="mr-2 h-3.5 w-3.5" />
-              Sign out
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          }
+        >
+          {(close) => (
+            <>
+              <div className="px-2 py-1.5">
+                <p className="text-xs text-muted-foreground">Signed in as</p>
+                <p className="text-[13px] font-semibold text-foreground truncate">{user.email}</p>
+              </div>
+              <div className="my-1 h-px bg-border" />
+              <PopItem href="/settings" onClick={close}>
+                <User className="h-3.5 w-3.5" />
+                Profile &amp; Settings
+              </PopItem>
+              <div className="my-1 h-px bg-border" />
+              <PopItem
+                destructive
+                onClick={() => {
+                  close();
+                  signOut({ callbackUrl: "/" });
+                }}
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Sign out
+              </PopItem>
+            </>
+          )}
+        </PopMenu>
       </div>
 
       <CommandPalette open={searchOpen} onOpenChange={setSearchOpen} />
