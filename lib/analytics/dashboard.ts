@@ -123,16 +123,27 @@ export interface DashboardData {
 
 export async function getDashboardData(userId: string): Promise<DashboardData> {
   const now = new Date();
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth();
-
-  const currentMonthStart = new Date(Date.UTC(y, m, 1));
-  const prevMonthStart    = new Date(Date.UTC(y, m - 1, 1));
-  const nextMonthStart    = new Date(Date.UTC(y, m + 1, 1));
 
   // Fast check: does this user have any transactions at all?
   const txCount = await db.transaction.count({ where: { userId } });
   if (txCount === 0) return buildDemoFallback();
+
+  // Anchor the dashboard to the most recent month that has activity, so importing
+  // a past statement (e.g. last month's) still populates everything instead of
+  // showing an empty current month.
+  const latestTx = await db.transaction.findFirst({
+    where: { userId },
+    orderBy: { date: "desc" },
+    select: { date: true },
+  });
+  const ref = latestTx?.date ?? now;
+  const y = ref.getUTCFullYear();
+  const m = ref.getUTCMonth();
+
+  const currentMonthStart = new Date(Date.UTC(y, m, 1));
+  const prevMonthStart    = new Date(Date.UTC(y, m - 1, 1));
+  const nextMonthStart    = new Date(Date.UTC(y, m + 1, 1));
+  const trendStart        = new Date(Date.UTC(y, m - 5, 1));
 
   // ── Parallel fetches ────────────────────────────────────────────────────────
   const [
@@ -143,6 +154,7 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
     rawInsights,
     subscriptions,
     flaggedTxns,
+    trendTxns,
   ] = await Promise.all([
     db.spendingSnapshot.findFirst({
       where: { userId, month: currentMonthStart },
@@ -192,6 +204,15 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
         date: true,
       },
     }),
+    // Last 6 months of debits for the trend chart (computed, not snapshot-dependent)
+    db.transaction.findMany({
+      where: {
+        userId,
+        type: "DEBIT",
+        date: { gte: trendStart, lt: nextMonthStart },
+      },
+      select: { date: true, amount: true },
+    }),
   ]);
 
   // ── KPI ─────────────────────────────────────────────────────────────────────
@@ -205,11 +226,19 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
 
   const savingsScore = currentSnapshot?.savingsScore ?? 65;
 
-  // prev month for MoM delta
+  // Monthly debit totals (computed from transactions, snapshot-independent)
+  const trendMap: Record<string, number> = {};
+  trendTxns.forEach((t) => {
+    const key = `${t.date.getUTCFullYear()}-${t.date.getUTCMonth()}`;
+    trendMap[key] = (trendMap[key] ?? 0) + Number(t.amount);
+  });
+
+  // prev month for MoM delta (snapshot if present, else computed)
   const prevSnapshot = snapshots.find(
     (s) => s.month.getTime() === prevMonthStart.getTime()
   );
-  const prevSpend = prevSnapshot ? Number(prevSnapshot.totalSpend) : null;
+  const prevKey = `${prevMonthStart.getUTCFullYear()}-${prevMonthStart.getUTCMonth()}`;
+  const prevSpend = prevSnapshot ? Number(prevSnapshot.totalSpend) : (trendMap[prevKey] ?? null);
   const totalSpendMoM =
     prevSpend && prevSpend > 0
       ? Math.round(((totalSpend - prevSpend) / prevSpend) * 100)
@@ -233,12 +262,21 @@ export async function getDashboardData(userId: string): Promise<DashboardData> {
     currency: "INR",
   };
 
-  // ── Monthly trend ────────────────────────────────────────────────────────────
-  const monthlyTrend: TrendPoint[] = snapshots.map((s) => ({
-    monthLabel: MONTH_LABELS[s.month.getUTCMonth()],
-    totalSpend: Number(s.totalSpend),
-    recurringTotal: Number(s.recurringTotal),
-  }));
+  // ── Monthly trend (last 6 months with activity, computed from transactions) ──
+  const monthlyTrend: TrendPoint[] = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(Date.UTC(y, m - i, 1));
+    const key = `${d.getUTCFullYear()}-${d.getUTCMonth()}`;
+    const amt = trendMap[key] ?? 0;
+    // Skip leading empty months, but keep gaps once data has started
+    if (amt > 0 || monthlyTrend.length > 0) {
+      monthlyTrend.push({
+        monthLabel: MONTH_LABELS[d.getUTCMonth()],
+        totalSpend: Math.round(amt),
+        recurringTotal: 0,
+      });
+    }
+  }
 
   // ── Category breakdown ───────────────────────────────────────────────────────
   let categoryBreakdown: CategoryPoint[] = [];

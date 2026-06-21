@@ -57,7 +57,15 @@ interface PendingInsight {
  * Safe to call fire-and-forget from import handlers.
  */
 export async function generateInsights(userId: string): Promise<void> {
-  const now = new Date();
+  // Anchor to the most recent month with activity, so a freshly-imported past
+  // statement still produces a digest + anomalies (rather than comparing against
+  // an empty current month).
+  const latestTx = await db.transaction.findFirst({
+    where: { userId, isDuplicate: false },
+    orderBy: { date: "desc" },
+    select: { date: true },
+  });
+  const now = latestTx?.date ?? new Date();
 
   // Rolling 90-day window
   const windowStart = new Date(now);

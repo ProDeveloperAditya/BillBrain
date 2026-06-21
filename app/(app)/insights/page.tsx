@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
+import { generateInsights } from "@/lib/analytics/generateInsights";
 import { InsightsClient } from "@/components/insights/InsightsClient";
 import type { InsightRow, DigestStats } from "@/components/insights/InsightsClient";
 
@@ -80,12 +81,24 @@ export default async function InsightsPage() {
     );
   }
 
-  // Fetch non-dismissed insights ordered newest first
-  const rawInsights = await db.insight.findMany({
+  // Fetch non-dismissed insights; generate them on first visit if none exist yet.
+  let rawInsights = await db.insight.findMany({
     where: { userId, isDismissed: false },
     orderBy: { generatedAt: "desc" },
     take: 50,
   });
+  if (rawInsights.length === 0) {
+    try {
+      await generateInsights(userId);
+      rawInsights = await db.insight.findMany({
+        where: { userId, isDismissed: false },
+        orderBy: { generatedAt: "desc" },
+        take: 50,
+      });
+    } catch (e) {
+      console.error("insights: generation failed", e);
+    }
+  }
 
   const insights: InsightRow[] = rawInsights.map((ins) => ({
     id:          ins.id,
@@ -96,10 +109,15 @@ export default async function InsightsPage() {
     generatedAt: ins.generatedAt.toISOString(),
   }));
 
-  // Digest stats: current calendar month
-  const now   = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  // Digest stats: anchored to the most recent month that has activity
+  const latest = await db.transaction.findFirst({
+    where: { userId, isDuplicate: false },
+    orderBy: { date: "desc" },
+    select: { date: true },
+  });
+  const ref   = latest?.date ?? new Date();
+  const start = new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), 1));
+  const end   = new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth() + 1, 0, 23, 59, 59, 999));
 
   const [monthTxns, highCount] = await Promise.all([
     db.transaction.findMany({

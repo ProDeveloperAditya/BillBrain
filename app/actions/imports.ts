@@ -8,6 +8,7 @@ import { parseSms } from "@/lib/parsers/smsParser";
 import { parseEmail } from "@/lib/parsers/emailParser";
 import { runNormalizationPipeline } from "@/lib/normalization/pipeline";
 import { detectDuplicates } from "@/lib/normalization/duplicateDetector";
+import { generateInsights } from "@/lib/analytics/generateInsights";
 import type { PreviewRow } from "@/lib/parsers/types";
 import type { CategoryName, ParseMethod } from "@prisma/client";
 
@@ -165,9 +166,18 @@ export async function confirmImportAction(
       })),
     });
 
+    // Generate fresh insights from the newly imported data (best-effort).
+    try {
+      await generateInsights(userId);
+    } catch (e) {
+      console.error("post-import insight generation failed", e);
+    }
+
     revalidatePath("/dashboard");
     revalidatePath("/transactions");
     revalidatePath("/insights");
+    revalidatePath("/leaks");
+    revalidatePath("/subscriptions");
 
     return { success: true, saved: toSave.length, skipped, errors };
   } catch (e) {
