@@ -2,6 +2,7 @@
 
 import { db } from "@/lib/db";
 import type { InsightType, InsightSeverity } from "@prisma/client";
+import { detectAnomalies, buildHistories } from "./anomalyDetector";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -67,9 +68,9 @@ export async function generateInsights(userId: string): Promise<void> {
   });
   const now = latestTx?.date ?? new Date();
 
-  // Rolling 90-day window
+  // 6-month rolling window (enough history for z-score anomaly detection)
   const windowStart = new Date(now);
-  windowStart.setDate(windowStart.getDate() - 90);
+  windowStart.setDate(windowStart.getDate() - 183);
 
   // Month boundaries (UTC — matches SpendingSnapshot convention)
   const y = now.getUTCFullYear();
@@ -77,6 +78,9 @@ export async function generateInsights(userId: string): Promise<void> {
   const curMonthStart   = new Date(Date.UTC(y, m,     1));
   const prevMonthStart  = new Date(Date.UTC(y, m - 1, 1));
   const prev2MonthStart = new Date(Date.UTC(y, m - 2, 1));
+  const prev3MonthStart = new Date(Date.UTC(y, m - 3, 1));
+  const prev4MonthStart = new Date(Date.UTC(y, m - 4, 1));
+  const prev5MonthStart = new Date(Date.UTC(y, m - 5, 1));
   const nextMonthStart  = new Date(Date.UTC(y, m + 1, 1));
 
   const [transactions, subscriptions] = await Promise.all([
@@ -110,9 +114,12 @@ export async function generateInsights(userId: string): Promise<void> {
 
   // ── Partition into monthly buckets ────────────────────────────────────────
 
-  const curTxs   = transactions.filter((t) => t.date >= curMonthStart  && t.date < nextMonthStart);
-  const prevTxs  = transactions.filter((t) => t.date >= prevMonthStart && t.date < curMonthStart);
+  const curTxs   = transactions.filter((t) => t.date >= curMonthStart   && t.date < nextMonthStart);
+  const prevTxs  = transactions.filter((t) => t.date >= prevMonthStart  && t.date < curMonthStart);
   const prev2Txs = transactions.filter((t) => t.date >= prev2MonthStart && t.date < prevMonthStart);
+  const prev3Txs = transactions.filter((t) => t.date >= prev3MonthStart && t.date < prev2MonthStart);
+  const prev4Txs = transactions.filter((t) => t.date >= prev4MonthStart && t.date < prev3MonthStart);
+  const prev5Txs = transactions.filter((t) => t.date >= prev5MonthStart && t.date < prev4MonthStart);
 
   // Aggregate spend by category (skip fixed/income)
   const catSum = (txs: typeof transactions): Record<string, number> => {
@@ -127,6 +134,9 @@ export async function generateInsights(userId: string): Promise<void> {
   const curCats   = catSum(curTxs);
   const prevCats  = catSum(prevTxs);
   const prev2Cats = catSum(prev2Txs);
+  const prev3Cats = catSum(prev3Txs);
+  const prev4Cats = catSum(prev4Txs);
+  const prev5Cats = catSum(prev5Txs);
 
   const topEntry = (cats: Record<string, number>) =>
     Object.entries(cats).sort((a, b) => b[1] - a[1])[0] ?? null;
@@ -240,33 +250,50 @@ export async function generateInsights(userId: string): Promise<void> {
     });
   }
 
-  // ── (d) Category spike ≥ 40% above 2-month rolling average ───────────────
+  // ── (d) Z-score anomaly detection (6-month rolling window) ──────────────
 
-  if (prevTxs.length > 0) {
-    for (const [cat, curAmt] of Object.entries(curCats)) {
+  {
+    // Build per-category monthly history: [p5, p4, p3, p2, p1, current]
+    const allCats = new Set([
+      ...Object.keys(curCats),
+      ...Object.keys(prevCats),
+      ...Object.keys(prev2Cats),
+      ...Object.keys(prev3Cats),
+      ...Object.keys(prev4Cats),
+      ...Object.keys(prev5Cats),
+    ]);
+
+    const spendByCategory: Record<string, number[]> = {};
+    for (const cat of allCats) {
       if (SKIP_CATS.has(cat)) continue;
+      spendByCategory[cat] = [
+        prev5Cats[cat] ?? 0,
+        prev4Cats[cat] ?? 0,
+        prev3Cats[cat] ?? 0,
+        prev2Cats[cat] ?? 0,
+        prevCats[cat]  ?? 0,
+        curCats[cat]   ?? 0,
+      ];
+    }
 
-      const p1 = prevCats[cat]  ?? 0;
-      const p2 = prev2Cats[cat] ?? 0;
-      if (p1 === 0 && p2 === 0) continue; // no prior baseline
+    const anomalies = detectAnomalies(buildHistories(spendByCategory));
 
-      const avg = p2 > 0 ? (p1 + p2) / 2 : p1;
-      if (avg <= 0 || curAmt < avg * 1.4) continue;
-
-      const spikePct = Math.round(((curAmt - avg) / avg) * 100);
-      const catName  = CAT_DISPLAY[cat] ?? cat;
-
+    for (const a of anomalies.slice(0, 3)) { // cap at 3 anomaly insights
+      const catName = CAT_DISPLAY[a.category] ?? a.category;
       pending.push({
         type:     "CATEGORY_SPIKE",
-        severity: spikePct >= 75 ? "HIGH" : "MEDIUM",
-        title:    `${catName} up ${spikePct}% above your average`,
-        body:     `You've spent ${fmt(curAmt)} on ${catName} this month, vs your typical ${fmt(Math.round(avg))}/month over the past 2 months — a ${spikePct}% spike.`,
+        severity: a.severity === "CRITICAL" ? "HIGH" : "MEDIUM",
+        title:    `${catName} is ${a.percentAboveNorm}% above normal (z = ${a.zScore})`,
+        body:     `You've spent ${fmt(a.currentAmount)} on ${catName} this month — ${fmt(a.currentAmount - a.expectedAmount)} more than your typical ${fmt(a.expectedAmount)}/month. This is a ${a.severity.toLowerCase()} statistical anomaly.`,
         data:     {
-          autoGenerated:  true,
-          category:       cat,
-          currentAmount:  Math.round(curAmt),
-          priorAverage:   Math.round(avg),
-          spikePercent:   spikePct,
+          autoGenerated:   true,
+          category:        a.category,
+          currentAmount:   a.currentAmount,
+          expectedAmount:  a.expectedAmount,
+          stdDev:          a.stdDev,
+          zScore:          a.zScore,
+          severity:        a.severity,
+          percentAboveNorm: a.percentAboveNorm,
         },
       });
     }

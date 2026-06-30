@@ -7,19 +7,30 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { DashboardKPI } from "@/lib/analytics/dashboard";
 
-// ─── Animated counter ─────────────────────────────────────────────────────────
+// ─── Indian number formatter (avoids locale/platform inconsistencies) ──────────
+
+function fmtIndian(n: number): string {
+  const s = Math.abs(Math.round(n)).toString();
+  if (s.length <= 3) return s;
+  const last3 = s.slice(-3);
+  let rest = s.slice(0, -3);
+  const parts: string[] = [];
+  while (rest.length > 2) { parts.unshift(rest.slice(-2)); rest = rest.slice(0, -2); }
+  if (rest) parts.unshift(rest);
+  return parts.join(",") + "," + last3;
+}
+
+// ─── Animated counter (direct DOM mutation — no React re-render per tick) ─────
 
 function AnimatedNumber({
   value,
   prefix = "",
   suffix = "",
-  decimals = 0,
   className,
 }: {
   value: number;
   prefix?: string;
   suffix?: string;
-  decimals?: number;
   className?: string;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -27,26 +38,15 @@ function AnimatedNumber({
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-
-    const fmt = (v: number) =>
-      prefix +
-      v.toLocaleString("en-IN", {
-        minimumFractionDigits: decimals,
-        maximumFractionDigits: decimals,
-      }) +
-      suffix;
-
+    const fmt = (v: number) => prefix + fmtIndian(v) + suffix;
     node.textContent = fmt(0);
-
     const controls = animate(0, value, {
       duration: 1.1,
       ease: "easeOut",
-      onUpdate: (v) => {
-        if (node) node.textContent = fmt(v);
-      },
+      onUpdate: (v) => { if (node) node.textContent = fmt(v); },
     });
     return () => controls.stop();
-  }, [value, prefix, suffix, decimals]);
+  }, [value, prefix, suffix]);
 
   return (
     <span ref={ref} className={className}>

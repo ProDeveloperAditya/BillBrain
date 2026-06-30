@@ -1,5 +1,7 @@
 import { db } from "@/lib/db";
 import type { CategoryName } from "@prisma/client";
+import { forecastSpend } from "@/lib/analytics/spendingForecast";
+import { detectAnomalies, buildHistories } from "@/lib/analytics/anomalyDetector";
 
 const CATEGORY_LABELS: Record<CategoryName, string> = {
   FOOD_DINING:     "Food & Dining",
@@ -30,7 +32,9 @@ export async function buildContext(userId: string, userQuery: string): Promise<s
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  const [transactions, insights, recurring, currentMonthTxs, snapshot] = await Promise.all([
+  const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+
+  const [transactions, insights, recurring, currentMonthTxs, snapshot, pastSnapshots, pastTxs] = await Promise.all([
     db.transaction.findMany({
       where: { userId, isDuplicate: false },
       orderBy: { date: "desc" },
@@ -73,6 +77,15 @@ export async function buildContext(userId: string, userQuery: string): Promise<s
       orderBy: { month: "desc" },
       select: { totalSpend: true, savingsScore: true, topCategories: true },
     }),
+    db.spendingSnapshot.findMany({
+      where: { userId, month: { gte: sixMonthsAgo } },
+      orderBy: { month: "asc" },
+      select: { month: true, totalSpend: true },
+    }),
+    db.transaction.findMany({
+      where: { userId, date: { gte: sixMonthsAgo }, type: "DEBIT", isDuplicate: false },
+      select: { amount: true, category: true, date: true },
+    }),
   ]);
 
   // ── Current month category breakdown ──────────────────────────────────────
@@ -81,6 +94,28 @@ export async function buildContext(userId: string, userQuery: string): Promise<s
     const cat = tx.category as CategoryName;
     categoryTotals[cat] = (categoryTotals[cat] ?? 0) + Number(tx.amount);
   }
+
+  // ── Spend forecast (WLS) ──────────────────────────────────────────────────
+  const monthlyAmounts = pastSnapshots.map((s) => Number(s.totalSpend));
+  const forecast = monthlyAmounts.length >= 3 ? forecastSpend(monthlyAmounts) : null;
+
+  // ── Z-score anomaly detection over 6-month category history ──────────────
+  const catMonthMap: Record<string, Record<string, number>> = {};
+  for (const tx of pastTxs) {
+    const cat = tx.category as string;
+    const monthKey = new Date(tx.date).toISOString().slice(0, 7);
+    if (!catMonthMap[cat]) catMonthMap[cat] = {};
+    catMonthMap[cat][monthKey] = (catMonthMap[cat][monthKey] ?? 0) + Number(tx.amount);
+  }
+  // Convert month-keyed map → sorted number[] for each category
+  const spendByCategoryArrays: Record<string, number[]> = {};
+  for (const [cat, monthMap] of Object.entries(catMonthMap)) {
+    spendByCategoryArrays[cat] = Object.keys(monthMap)
+      .sort()
+      .map((k) => monthMap[k]);
+  }
+  const histories = buildHistories(spendByCategoryArrays);
+  const anomalies = detectAnomalies(histories);
 
   const sortedCategories = (Object.entries(categoryTotals) as [CategoryName, number][])
     .filter(([cat]) => cat !== "SALARY_INCOME" && cat !== "TRANSFERS" && cat !== "INVESTMENTS")
@@ -163,6 +198,26 @@ export async function buildContext(userId: string, userQuery: string): Promise<s
     for (const ins of insights) {
       lines.push(`[${ins.severity}] ${ins.title}: ${ins.body}`);
     }
+  }
+
+  // ── Z-score anomalies ─────────────────────────────────────────────────────
+  if (anomalies.length > 0) {
+    lines.push("");
+    lines.push("─── SPENDING ANOMALIES (z-score detection, 6-month window) ─────────────────");
+    for (const a of anomalies.slice(0, 5)) {
+      lines.push(
+        `[${a.severity}] ${a.category}: ₹${fmt(a.currentAmount)} vs avg ₹${fmt(a.expectedAmount)} (z=${a.zScore.toFixed(2)})`
+      );
+    }
+  }
+
+  // ── WLS Spend Forecast ────────────────────────────────────────────────────
+  if (forecast) {
+    lines.push("");
+    lines.push("─── NEXT-MONTH SPEND FORECAST (weighted linear regression) ─────────────────");
+    lines.push(`Predicted: ₹${fmt(forecast.predictedSpend)}`);
+    lines.push(`80% confidence band: ₹${fmt(forecast.lowerBound)} – ₹${fmt(forecast.upperBound)}`);
+    lines.push(`Trend: ${forecast.trend} (${forecast.trendPercent > 0 ? "+" : ""}${forecast.trendPercent}%) · Confidence: ${forecast.confidence}`);
   }
 
   lines.push("");

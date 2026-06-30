@@ -8,6 +8,7 @@ import { InsightCards } from "@/components/dashboard/InsightCards";
 import { SubscriptionSummary } from "@/components/dashboard/SubscriptionSummary";
 import { UnusualAlertBanner } from "@/components/dashboard/UnusualAlertBanner";
 import { MonthSelector } from "@/components/dashboard/MonthSelector";
+import { ForecastCard, ForecastCardPlaceholder } from "@/components/dashboard/ForecastCard";
 
 export const metadata = { title: "Dashboard — BillBrain AI" };
 
@@ -60,6 +61,13 @@ export default async function DashboardPage({
         <SpendTrendChart data={data.monthlyTrend} />
         <CategoryDonut data={data.categoryBreakdown} />
       </div>
+
+      {/* ── Forecast card (WLS model) ────────────────────────────────────────── */}
+      {data.hasRealData && (
+        data.spendForecast
+          ? <ForecastCard forecast={data.spendForecast} />
+          : <ForecastCardPlaceholder monthsHave={Math.min(data.monthlyTrend.length, 2)} />
+      )}
 
       {/* ── Weekly pattern + subscription summary ──────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

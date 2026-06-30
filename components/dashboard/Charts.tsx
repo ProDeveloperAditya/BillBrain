@@ -2,20 +2,15 @@
 
 import {
   ResponsiveContainer,
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  PieChart,
-  Pie,
-  Cell,
   BarChart,
   Bar,
+  Cell,
   Area,
   AreaChart,
-  Legend,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { TrendPoint, CategoryPoint, WeeklyPoint } from "@/lib/analytics/dashboard";
@@ -124,112 +119,64 @@ export function SpendTrendChart({ data }: { data: TrendPoint[] }) {
 
 // ─── Category donut ───────────────────────────────────────────────────────────
 
-interface DonutLabelProps {
-  cx: number;
-  cy: number;
-  totalSpend: number;
-}
 
-function DonutCenterLabel({ cx, cy, totalSpend }: DonutLabelProps) {
-  return (
-    <>
-      <text
-        x={cx}
-        y={cy - 8}
-        textAnchor="middle"
-        dominantBaseline="middle"
-        style={{ fill: "oklch(0.52 0.015 255)", fontSize: "10px" }}
-      >
-        Total
-      </text>
-      <text
-        x={cx}
-        y={cy + 10}
-        textAnchor="middle"
-        dominantBaseline="middle"
-        style={{
-          fill: "oklch(0.93 0.008 255)",
-          fontSize: "13px",
-          fontWeight: 700,
-        }}
-      >
-        ₹{(totalSpend / 1000).toFixed(0)}k
-      </text>
-    </>
-  );
-}
-
-function CatTooltip({ active, payload }: { active?: boolean; payload?: Array<{ name: string; value: number; payload: CategoryPoint }> }) {
-  if (!active || !payload?.length) return null;
-  const d = payload[0];
-  return (
-    <div style={TOOLTIP_STYLE}>
-      <p className="font-semibold" style={{ color: d.payload.color }}>
-        {d.payload.displayName}
-      </p>
-      <p className="mt-0.5">{fmt(d.value)}</p>
-      <p style={{ color: "oklch(0.52 0.015 255)" }}>{d.payload.percentage}% of total</p>
-    </div>
-  );
+function fmtK(v: number): string {
+  if (v >= 100000) return "₹" + (v / 100000).toFixed(1) + "L";
+  if (v >= 1000)   return "₹" + (v / 1000).toFixed(0) + "k";
+  return "₹" + Math.round(v);
 }
 
 export function CategoryDonut({ data }: { data: CategoryPoint[] }) {
   const total = data.reduce((s, d) => s + d.amount, 0);
+  if (total === 0) return null;
+
+  // Merge OTHER → "Uncategorised" with a slate colour
+  const display = data.map((d) =>
+    d.category === "OTHER"
+      ? { ...d, displayName: "Uncategorised", color: "#475569" }
+      : d
+  );
+
+  const sorted = [...display].sort((a, b) => b.amount - a.amount);
+  const top    = sorted.slice(0, 6); // cap at 6 rows so card doesn't overflow
 
   return (
     <Card className="surface-2 border-border">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-semibold">Category Breakdown</CardTitle>
+        <p className="text-[11px] text-muted-foreground mt-0.5">
+          Total spend: {fmtK(total)}
+        </p>
       </CardHeader>
       <CardContent>
-        <ResponsiveContainer width="100%" height={220}>
-          <PieChart>
-            <Pie
-              data={data}
-              cx="50%"
-              cy="50%"
-              innerRadius={60}
-              outerRadius={88}
-              paddingAngle={2}
-              dataKey="amount"
-              nameKey="displayName"
-            >
-              {data.map((entry) => (
-                <Cell
-                  key={entry.category}
-                  fill={entry.color}
-                  opacity={0.9}
-                  stroke="transparent"
-                />
-              ))}
-              {/* Center label rendered via label prop — use a custom component trick */}
-            </Pie>
-            <Tooltip content={<CatTooltip />} />
-          </PieChart>
-        </ResponsiveContainer>
-
-        {/* Center total overlay (positioned over the chart) */}
-        <div className="relative -mt-[140px] flex flex-col items-center justify-center h-[56px] pointer-events-none">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total</p>
-          <p className="text-base font-bold">₹{(total / 1000).toFixed(0)}k</p>
-        </div>
-
-        {/* Legend */}
-        <div className="mt-6 grid grid-cols-2 gap-x-3 gap-y-1.5">
-          {data.map((d) => (
-            <div key={d.category} className="flex items-center gap-1.5 min-w-0">
-              <span
-                className="h-2 w-2 shrink-0 rounded-full"
-                style={{ background: d.color }}
-              />
-              <span className="truncate text-[11px] text-muted-foreground">
-                {d.displayName}
-              </span>
-              <span className="ml-auto shrink-0 text-[11px] font-medium">
-                {d.percentage}%
-              </span>
-            </div>
-          ))}
+        <div className="space-y-3">
+          {top.map((d) => {
+            const pct = Math.round((d.amount / total) * 100);
+            return (
+              <div key={d.category}>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-sm"
+                      style={{ background: d.color }}
+                    />
+                    <span className="text-[12px] text-foreground truncate">{d.displayName}</span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0 ml-3">
+                    <span className="text-[12px] font-semibold text-foreground">{fmtK(d.amount)}</span>
+                    <span className="text-[11px] text-muted-foreground w-8 text-right">{pct}%</span>
+                  </div>
+                </div>
+                {/* Progress bar */}
+                <div className="h-1.5 w-full rounded-full bg-border overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-700"
+                    style={{ width: `${pct}%`, background: d.color }}
+                  />
+                </div>
+              </div>
+            );
+          })}
         </div>
       </CardContent>
     </Card>

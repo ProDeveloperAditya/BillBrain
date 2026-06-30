@@ -2,9 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bot, Send, Sparkles } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Bot, Sparkles } from "lucide-react";
+import { PromptInputBox } from "@/components/ui/ai-prompt-box";
+import TypingEffect from "@/components/ui/typing-effect";
 import { cn } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -228,6 +228,14 @@ function SuggestionPills({ onSelect }: { onSelect: (q: string) => void }) {
 
 // ── Main client ────────────────────────────────────────────────────────────────
 
+const TYPING_PROMPTS = [
+  "Ask about your spending trends…",
+  "Which subscriptions can I cancel?",
+  "How much did I spend on food?",
+  "Show my biggest expenses this month…",
+  "Where am I overspending?",
+];
+
 export function AssistantClient({ isDemo }: { isDemo: boolean }) {
   const [messages, setMessages] = useState<Message[]>(() => [
     {
@@ -238,13 +246,11 @@ export function AssistantClient({ isDemo }: { isDemo: boolean }) {
       timestamp: new Date(),
     },
   ]);
-  const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   const scrollAnchorRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     scrollAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -271,7 +277,6 @@ export function AssistantClient({ isDemo }: { isDemo: boolean }) {
 
       setPendingId(placeholder.id);
       setMessages((prev) => [...prev, userMsg, placeholder]);
-      setInput("");
       setIsLoading(true);
 
       try {
@@ -318,18 +323,10 @@ export function AssistantClient({ isDemo }: { isDemo: boolean }) {
       } finally {
         setIsLoading(false);
         setPendingId(null);
-        textareaRef.current?.focus();
       }
     },
     [messages, isLoading, sessionId]
   );
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage(input);
-    }
-  };
 
   const showPills = messages.length === 1;
 
@@ -342,7 +339,7 @@ export function AssistantClient({ isDemo }: { isDemo: boolean }) {
           AI Assistant
         </h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Answers grounded in your actual transaction data
+          <TypingEffect texts={TYPING_PROMPTS} typingSpeed={50} deletingSpeed={25} />
         </p>
       </div>
 
@@ -373,9 +370,13 @@ export function AssistantClient({ isDemo }: { isDemo: boolean }) {
       </AnimatePresence>
 
       {/* Chat pane */}
-      <div className="flex-1 min-h-0 flex flex-col surface-2 border border-border rounded-2xl overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col surface-2 border border-border rounded-2xl overflow-hidden relative">
+        {/* Ambient glow orbs */}
+        <div className="pointer-events-none absolute -top-16 -right-16 h-56 w-56 rounded-full bg-primary/6 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-16 -left-16 h-44 w-44 rounded-full bg-violet-600/5 blur-3xl" />
+
         {/* Message scroll area */}
-        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-5 pt-5 pb-4 space-y-4">
+        <div className="relative z-10 flex-1 min-h-0 overflow-y-auto scrollbar-thin px-5 pt-5 pb-4 space-y-4">
           {messages.map((msg) =>
             msg.role === "user" ? (
               <UserBubble key={msg.id} msg={msg} />
@@ -393,30 +394,14 @@ export function AssistantClient({ isDemo }: { isDemo: boolean }) {
           <div ref={scrollAnchorRef} />
         </div>
 
-        {/* Input bar */}
-        <div className="shrink-0 border-t border-border px-4 py-3 bg-background/40">
-          <div className="flex items-end gap-2">
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask about your spending… (Enter to send, Shift+Enter for newline)"
-              disabled={isLoading}
-              rows={1}
-              className="flex-1 resize-none max-h-32 min-h-[38px] text-sm py-2 leading-relaxed"
-            />
-            <Button
-              size="icon"
-              onClick={() => sendMessage(input)}
-              disabled={isLoading || !input.trim()}
-              className="shrink-0 h-9 w-9 mb-0.5"
-              aria-label="Send"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          </div>
-          <p className="text-[10px] text-muted-foreground mt-2 text-center">
+        {/* Input bar — using PromptInputBox */}
+        <div className="relative z-10 shrink-0 border-t border-border px-4 py-3 bg-background/60 backdrop-blur-sm">
+          <PromptInputBox
+            onSend={sendMessage}
+            disabled={isLoading}
+            placeholder="Ask about your spending…"
+          />
+          <p className="text-[10px] text-muted-foreground mt-1 text-center">
             BillBrain AI provides informational insights only — not professional financial advice.
           </p>
         </div>

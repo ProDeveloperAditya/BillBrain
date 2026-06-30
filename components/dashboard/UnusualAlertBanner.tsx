@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { UnusualAlert } from "@/lib/analytics/dashboard";
+import { BorderBeam } from "@/components/ui/border-beam";
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-IN", {
@@ -26,8 +27,9 @@ export function UnusualAlertBanner({ alerts }: { alerts: UnusualAlert[] }) {
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -8 }}
         transition={{ duration: 0.25 }}
-        className="rounded-xl border border-amber-400/30 bg-amber-400/8 px-4 py-3 flex items-start gap-3"
+        className="relative rounded-xl border border-amber-400/30 bg-amber-400/8 px-4 py-3 flex items-start gap-3 overflow-hidden"
       >
+        <BorderBeam lightColor="#f59e0b" duration={5} borderWidth={1} />
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-400/15 mt-0.5">
           <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
         </div>

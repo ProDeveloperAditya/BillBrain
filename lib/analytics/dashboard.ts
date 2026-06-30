@@ -4,6 +4,7 @@
  */
 
 import { db } from "@/lib/db";
+import { forecastSpend, type ForecastResult } from "./spendingForecast";
 
 // ─── Category display metadata ────────────────────────────────────────────────
 
@@ -116,6 +117,7 @@ export interface DashboardData {
   insights: InsightItem[];
   subscriptions: SubscriptionItem[];
   unusualAlerts: UnusualAlert[];
+  spendForecast: ForecastResult | null;
   hasRealData: boolean;
   availableMonths: string[];   // ["2026-05", "2026-04", …] newest-first
   selectedMonth: string;       // "2026-05"
@@ -408,6 +410,10 @@ export async function getDashboardData(
     date: t.date.toISOString(),
   }));
 
+  // ── Spend forecast (WLS on last 6 months of debit totals) ───────────────────
+  const forecastInputs = monthlyTrend.map((p) => p.totalSpend);
+  const spendForecast  = forecastSpend(forecastInputs);
+
   return {
     kpi,
     monthlyTrend,
@@ -417,6 +423,7 @@ export async function getDashboardData(
     insights,
     subscriptions: subscriptionItems,
     unusualAlerts,
+    spendForecast,
     hasRealData: true,
     availableMonths,
     selectedMonth,
@@ -482,6 +489,7 @@ function buildDemoFallback(): DashboardData {
       { id: "s5", merchantName: "Spotify",         averageAmount: 119, annualCost: 1428,  isPossiblyForgotten: false },
     ],
     unusualAlerts: [],
+    spendForecast: null,
     hasRealData: false,
     availableMonths: [],
     selectedMonth: "",
