@@ -1,5 +1,5 @@
 import { normalizeRaw } from "./merchantNormalizer";
-import { tagCategory } from "./categoryTagger";
+import { categorize } from "./categorize";
 import type { ParsedTransaction } from "@/lib/parsers/types";
 import type { PreviewRow } from "@/lib/parsers/types";
 
@@ -11,7 +11,7 @@ function nextId(): string {
 /** Apply merchant normalization + category tagging to a raw parsed transaction. */
 export function normalizeTransaction(tx: ParsedTransaction): PreviewRow {
   const { merchantName } = normalizeRaw(tx.rawDescription);
-  const category = tagCategory(merchantName, tx.rawDescription);
+  const { category } = categorize(merchantName, tx.rawDescription);
 
   // Confidence-based flagging: low confidence → flagged for user review
   const isFlagged = tx.confidence < 0.6;

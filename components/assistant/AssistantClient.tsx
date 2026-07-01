@@ -2,12 +2,21 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bot, Sparkles } from "lucide-react";
+import { Bot, Sparkles, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { PromptInputBox } from "@/components/ui/ai-prompt-box";
 import TypingEffect from "@/components/ui/typing-effect";
 import { cn } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+
+interface Citation {
+  id: string;
+  date: string;
+  merchant: string;
+  amount: number;
+  type: "DEBIT" | "CREDIT";
+  category: string;
+}
 
 interface Message {
   id: string;
@@ -15,6 +24,7 @@ interface Message {
   content: string;
   timestamp: Date;
   isError?: boolean;
+  citations?: Citation[];
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -157,6 +167,46 @@ function UserBubble({ msg }: { msg: Message }) {
   );
 }
 
+function SourcePanel({ citations }: { citations: Citation[] }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.1 }}
+      className="mt-1.5 rounded-xl border border-border/70 bg-background/40 px-3 py-2"
+    >
+      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground mb-1.5">
+        Sources · {citations.length} transaction{citations.length > 1 ? "s" : ""}
+      </p>
+      <div className="flex flex-col gap-1">
+        {citations.map((c) => (
+          <div key={c.id} className="flex items-center gap-2 text-[11px]">
+            <span
+              className={cn(
+                "flex h-4 w-4 shrink-0 items-center justify-center rounded",
+                c.type === "CREDIT" ? "bg-emerald-500/10 text-emerald-400" : "bg-muted text-muted-foreground"
+              )}
+            >
+              {c.type === "CREDIT" ? <ArrowDownLeft className="h-2.5 w-2.5" /> : <ArrowUpRight className="h-2.5 w-2.5" />}
+            </span>
+            <span className="text-muted-foreground tabular-nums shrink-0">{c.date}</span>
+            <span className="text-foreground truncate flex-1 min-w-0">{c.merchant}</span>
+            <span className="text-muted-foreground/70 shrink-0 hidden sm:inline">{c.category}</span>
+            <span
+              className={cn(
+                "font-medium tabular-nums shrink-0",
+                c.type === "CREDIT" ? "text-emerald-400" : "text-foreground"
+              )}
+            >
+              {c.type === "CREDIT" ? "+" : "−"}₹{Math.round(c.amount).toLocaleString("en-IN")}
+            </span>
+          </div>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
+
 function AiBubble({
   msg,
   showTyping,
@@ -187,6 +237,11 @@ function AiBubble({
             <MarkdownContent content={msg.content} />
           )}
         </div>
+
+        {!showTyping && msg.citations && msg.citations.length > 0 && (
+          <SourcePanel citations={msg.citations} />
+        )}
+
         {!showTyping && (
           <span className="text-[10px] text-muted-foreground pl-1 tabular-nums">
             {formatTime(msg.timestamp)}
@@ -295,17 +350,48 @@ export function AssistantClient({ isDemo }: { isDemo: boolean }) {
           }),
         });
 
-        if (!res.ok) throw new Error("api-error");
+        if (!res.ok || !res.body) throw new Error("api-error");
 
-        const data: { text: string; sessionId: string } = await res.json();
-        setSessionId(data.sessionId);
+        // Read the NDJSON stream: {type:"meta"} → {type:"delta"}… → {type:"done"}
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let acc = "";
+
+        const applyEvent = (evt: { type: string; text?: string; sessionId?: string; citations?: Citation[] }) => {
+          if (evt.type === "meta") {
+            if (evt.sessionId) setSessionId(evt.sessionId);
+            if (evt.citations?.length) {
+              setMessages((prev) =>
+                prev.map((m) => (m.id === placeholder.id ? { ...m, citations: evt.citations } : m))
+              );
+            }
+          } else if (evt.type === "delta" && evt.text) {
+            acc += evt.text;
+            setMessages((prev) =>
+              prev.map((m) => (m.id === placeholder.id ? { ...m, content: acc } : m))
+            );
+            // First token arrived — drop the typing indicator.
+            setPendingId((cur) => (cur === placeholder.id ? null : cur));
+          } else if (evt.type === "error") {
+            throw new Error("generation-failed");
+          }
+        };
+
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n");
+          buffer = parts.pop() ?? "";
+          for (const line of parts) {
+            if (line.trim()) applyEvent(JSON.parse(line));
+          }
+        }
+        if (buffer.trim()) applyEvent(JSON.parse(buffer));
 
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === placeholder.id
-              ? { ...m, content: data.text, timestamp: new Date() }
-              : m
-          )
+          prev.map((m) => (m.id === placeholder.id ? { ...m, timestamp: new Date() } : m))
         );
       } catch {
         setMessages((prev) =>

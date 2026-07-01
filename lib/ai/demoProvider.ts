@@ -19,7 +19,7 @@ function extractMetrics(system: string): CtxMetrics {
   return {
     totalSpend:      num(system.match(/Total spend:\s*₹([\d,]+)/)?.[1]),
     savingsScore:    system.match(/Savings score:\s*(\d+)/)?.[1] ?? "—",
-    subCount:        system.match(/SUBSCRIPTIONS?\s*\((\d+)\s*active\)/i)?.[1] ?? "—",
+    subCount:        system.match(/SUBSCRIPTIONS?\s*\((\d+)\s*active/i)?.[1] ?? "—",
     subMonthly:      num(system.match(/subscriptions.*?₹([\d,]+)\/mo/i)?.[1]),
     topCategory:     system.match(/Category #1[:\s]+([A-Za-z &]+)/i)?.[1]?.trim() ?? "Shopping",
     lateNightOrders: system.match(/(\d+)\s*late.?night/i)?.[1] ?? "0",
@@ -135,5 +135,15 @@ export class DemoProvider implements AIProviderInterface {
     await new Promise((r) => setTimeout(r, 600));
 
     return { text, tokensUsed: 0 };
+  }
+
+  async *stream(messages: AIMessage[]): AsyncIterable<string> {
+    const { text } = await this.complete(messages);
+    // Emit token-by-token so demo mode streams like the live providers.
+    const tokens = text.match(/\s*\S+/g) ?? [text];
+    for (const t of tokens) {
+      await new Promise((r) => setTimeout(r, 16));
+      yield t;
+    }
   }
 }

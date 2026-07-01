@@ -33,8 +33,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Message is required" }, { status: 400 });
   }
 
-  // ── Build context system prompt ───────────────────────────────────────────
-  const systemPrompt = await buildContext(userId, message);
+  // ── Build grounded context + citations ────────────────────────────────────
+  const { prompt: systemPrompt, citations } = await buildContext(userId, message);
 
   // ── Assemble message array ────────────────────────────────────────────────
   const messages: AIMessage[] = [
@@ -46,66 +46,77 @@ export async function POST(req: NextRequest) {
     { role: "user", content: message },
   ];
 
-  // ── Call AI provider ──────────────────────────────────────────────────────
   const provider = getProvider();
-  const result = await provider.complete(messages);
-
   const aiProvider: AIProvider = PROVIDER_MAP[provider.providerName] ?? "DEMO";
 
-  // ── Persist to DB ─────────────────────────────────────────────────────────
+  // ── Resolve / create the chat session up-front so we can stream its id ─────
   let sessionId = existingSessionId;
-
   if (sessionId) {
-    // Verify it belongs to this user
     const existing = await db.chatSession.findFirst({
       where: { id: sessionId, userId },
       select: { id: true },
     });
     if (!existing) sessionId = undefined;
   }
-
   if (!sessionId) {
     const newSession = await db.chatSession.create({
-      data: {
-        userId,
-        aiProvider,
-        title: message.slice(0, 60),
-        messageCount: 0,
-      },
+      data: { userId, aiProvider, title: message.slice(0, 60), messageCount: 0 },
     });
     sessionId = newSession.id;
   }
+  const resolvedSessionId = sessionId;
 
-  await db.$transaction([
-    db.chatMessage.create({
-      data: {
-        sessionId,
-        userId,
-        role: "USER",
-        content: message,
-        citations: [],
-      },
-    }),
-    db.chatMessage.create({
-      data: {
-        sessionId,
-        userId,
-        role: "ASSISTANT",
-        content: result.text,
-        citations: [],
-        tokenCount: result.tokensUsed || null,
-        model: provider.providerName.toLowerCase(),
-      },
-    }),
-    db.chatSession.update({
-      where: { id: sessionId },
-      data: {
-        messageCount: { increment: 2 },
-        aiProvider,
-        updatedAt: new Date(),
-      },
-    }),
-  ]);
+  // ── Stream NDJSON: {type:"meta"} then {type:"delta"}… then {type:"done"} ───
+  const encoder = new TextEncoder();
+  const send = (obj: unknown) => encoder.encode(JSON.stringify(obj) + "\n");
 
-  return NextResponse.json({ text: result.text, sessionId });
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      controller.enqueue(send({ type: "meta", sessionId: resolvedSessionId, citations }));
+
+      let full = "";
+      try {
+        for await (const delta of provider.stream(messages)) {
+          full += delta;
+          controller.enqueue(send({ type: "delta", text: delta }));
+        }
+      } catch (err) {
+        controller.enqueue(send({ type: "error", message: "generation-failed" }));
+        console.error("chat stream error:", err);
+      }
+
+      // Persist the completed turn (best-effort; never blocks the client).
+      try {
+        await db.$transaction([
+          db.chatMessage.create({
+            data: { sessionId: resolvedSessionId, userId, role: "USER", content: message, citations: [] },
+          }),
+          db.chatMessage.create({
+            data: {
+              sessionId: resolvedSessionId, userId, role: "ASSISTANT", content: full,
+              citations: citations.map((c) => c.id),
+              model: provider.providerName.toLowerCase(),
+            },
+          }),
+          db.chatSession.update({
+            where: { id: resolvedSessionId },
+            data: { messageCount: { increment: 2 }, aiProvider, updatedAt: new Date() },
+          }),
+        ]);
+      } catch (err) {
+        console.error("chat persist error:", err);
+      }
+
+      controller.enqueue(send({ type: "done" }));
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }

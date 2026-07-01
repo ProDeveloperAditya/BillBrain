@@ -29,4 +29,23 @@ export class GroqProvider implements AIProviderInterface {
       tokensUsed: completion.usage?.total_tokens ?? 0,
     };
   }
+
+  async *stream(messages: AIMessage[]): AsyncIterable<string> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Groq = require("groq-sdk");
+    const client = new Groq({ apiKey: this.apiKey });
+
+    const completion = await client.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      messages,
+      temperature: 0.4,
+      max_tokens: 800,
+      stream: true,
+    });
+
+    for await (const chunk of completion) {
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (delta) yield delta;
+    }
+  }
 }
